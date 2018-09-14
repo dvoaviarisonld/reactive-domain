@@ -55,8 +55,6 @@ namespace ReactiveDomain.EventStore {
 
             var fullPath = Path.Combine(installPath.FullName, "EventStore.ClusterNode.exe");
 
-
-
             var runningEventStores = Process.GetProcessesByName("EventStore.ClusterNode");
             if (runningEventStores.Count() != 0) {
                 switch (opt) {
@@ -69,9 +67,8 @@ namespace ReactiveDomain.EventStore {
                         }
                         break;
                     case StartConflictOption.Error:
-                        throw new Exception("Conflicting Eventstore running.");
+                        throw new Exception("Conflicting EventStore running.");
                 }
-
             }
 
             if (_process == null) {
@@ -93,7 +90,146 @@ namespace ReactiveDomain.EventStore {
                 server,
                 tcpPort);
         }
+
+        /// <summary>
+        /// Establish EventStore Cluster Connection via Discovery
+        /// </summary>
+        /// <remarks>
+        /// Define a common DNS name relating it to all cluster node ID address(es).
+        /// EventStore will process the DNS into gossip seeds for use in the connection.
+        /// </remarks>
+        /// <param name="credentials">UserCredentials</param>
+        /// <param name="dnsName">DNS name representing cluster IP address(es)</param>
+        /// <param name="tcpPort">TCP port used for all cluster nodes</param>
         public void Connect(
+            UserCredentials credentials,
+            string dnsName,
+            int tcpPort) {
+
+            if (dnsName is null || dnsName.Length.Equals(0)) {
+                _log.Error("The DNS name must be supplied.");
+                return;
+            }
+
+            var settings = ConnectionSettings.Create()
+                .SetDefaultUserCredentials(new global::EventStore.ClientAPI.SystemData.UserCredentials(credentials.Username, credentials.Password))
+                .KeepReconnecting()
+                .KeepRetrying()
+                .UseConsoleLogger()
+                //.EnableVerboseLogging()
+                .Build();
+
+            var esConn = EventStoreConnection.Create(settings,
+                ClusterSettings.Create()
+                    .DiscoverClusterViaDns().SetClusterDns(dnsName).SetClusterGossipPort(2113), $"{dnsName}-Cluster Connection");
+
+            Connection = new EventStoreConnectionWrapper(esConn);
+
+            if (Connection == null) {
+                _log.Error("EventStore DNS Cluster Connection is null - Diagnostic Monitoring will be unavailable.");
+                TeardownEventStore(false);
+                return;
+            }
+            StartEventStore();
+        }
+
+        /// <summary>
+        /// Establish EventStore Cluster Connection via Gossip Seed IP address(es) and the same TCP port
+        /// </summary>
+        /// <remarks>
+        /// Connect to EventStore using gossip seed IP addresses.
+        /// This supports both a single EventStore instance and an EventStore cluster.
+        /// A cluster of 1 is equivalent to a single instance.
+        /// </remarks>
+        /// <param name="credentials">UserCredentials</param>
+        /// <param name="gossipSeeds">The TCP/IP addresses of the EventStore servers</param>
+        /// <param name="tcpPort">TCP ports replicated for all gossip seeds.</param>
+        public void Connect(
+            UserCredentials credentials,
+            IPAddress[] gossipSeeds,
+            int tcpPort) {
+
+            if (gossipSeeds.Length == 0) {
+                _log.Error("One or more EventStore Gossip Seed IPs must be supplied.");
+                return;
+            }
+
+	        var ports = new List<int>();
+	        for (int i = 0; i < gossipSeeds.Length; i++)
+	        {
+		        ports.Add(tcpPort);
+	        }
+			Connect(credentials, gossipSeeds, ports.ToArray());
+        }
+
+		/// <summary>
+		/// Establish EventStore Cluster Connection via Gossip Seed IP address(es)
+		/// </summary>
+		/// <remarks>
+		/// Connect to EventStore using gossip seed IP addresses.
+		/// This supports both a single EventStore instance and an EventStore cluster.
+		/// A cluster of 1 is equivalent to a single instance.
+		/// </remarks>
+		/// <param name="credentials">UserCredentials</param>
+		/// <param name="gossipSeeds">The TCP/IP addresses of the EventStore servers</param>
+		/// <param name="tcpPorts">TCP ports for the gossip seeds. Keep in order with the gossip seeds. If all gossip seeds use the same port, you can pass only one.</param>
+		public void Connect(
+			UserCredentials credentials,
+			IPAddress[] gossipSeeds,
+			int[] tcpPorts)
+		{
+
+			if (gossipSeeds.Length == 0)
+			{
+				_log.Error("One or more EventStore Gossip Seed IPs must be supplied.");
+				return;
+			}
+			if (tcpPorts.Length == 0)
+			{
+				_log.Error("One or more TCP ports must be supplied.");
+				return;
+			}
+			if (gossipSeeds.Length != tcpPorts.Length && tcpPorts.Length > 1)
+			{
+				_log.Error("One TCP port, or one port per seed is required. ");
+			}
+
+			var settings = ConnectionSettings.Create()
+				.SetDefaultUserCredentials(new global::EventStore.ClientAPI.SystemData.UserCredentials(credentials.Username, credentials.Password))
+				.KeepReconnecting()
+				.KeepRetrying()
+				.UseConsoleLogger()
+				//.EnableVerboseLogging()
+				.Build();
+
+			var seeds = new List<IPEndPoint>();
+			for (int i = 0; i < gossipSeeds.Length; i++)
+			{
+				seeds.Add(new IPEndPoint(gossipSeeds[i], tcpPorts.Length.Equals(1) ? tcpPorts[0] : tcpPorts[i]));
+			}
+
+			Connection = new EventStoreConnectionWrapper(
+				EventStoreConnection.Create(settings,
+					ClusterSettings.Create()
+					.DiscoverClusterViaGossipSeeds()
+					.SetGossipSeedEndPoints(seeds.ToArray()), $"{gossipSeeds.Length}-Cluster Connection"));
+
+			if (Connection == null)
+			{
+				_log.Error($"EventStore Custer of {gossipSeeds.Length} Connection is null - Diagnostic Monitoring will be unavailable.");
+				TeardownEventStore(false);
+				return;
+			}
+			StartEventStore();
+		}
+
+		/// <summary>
+		/// Connect to EventStore with an IP address and a port
+		/// </summary>
+		/// <param name="credentials">UserCredentials</param>
+		/// <param name="server">IP address of the EventStore server</param>
+		/// <param name="tcpPort">TCP port on the server</param>
+		public void Connect(
                         UserCredentials credentials,
                         IPAddress server,
                         int tcpPort) {
@@ -107,32 +243,47 @@ namespace ReactiveDomain.EventStore {
                 //.EnableVerboseLogging()
                 .Build();
 
-            Connection = new EventStoreConnectionWrapper(EventStoreConnection.Create(settings, tcpEndpoint, "Default Connection"));
+            Connection =
+                new EventStoreConnectionWrapper(EventStoreConnection.Create(settings, tcpEndpoint, "Default Connection"));
 
-            if (Connection == null) {
+            if (Connection == null)
+            {
                 _log.Error("EventStore Connection is null - Diagnostic Monitoring will be unavailable.");
                 TeardownEventStore(false);
                 return;
             }
+            StartEventStore();
+        }
+
+        /// <summary>
+        /// Connect to EventStore and test the connection
+        /// </summary>
+        /// <remarks>
+        /// 
+        /// </remarks>
+        private void StartEventStore()
+        {
             Connection.Connect();
             int retry = 8;
             int count = 0;
-            do {
-                try {
+            do
+            {
+                try
+                {
                     Connection.ReadStreamForward("by_event_type", 0, 1);
                     return;
                 }
-                catch {
+                catch
+                {
                     //ignore
                 }
+
                 Thread.Sleep(100);
                 count++;
             } while (count < retry);
+
             throw new Exception("Unable to start Eventstore");
-
         }
-
-
 
         public static EventData ToEventData(
             Guid eventId,
