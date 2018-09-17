@@ -121,7 +121,9 @@ namespace ReactiveDomain.EventStore {
 
             var esConn = EventStoreConnection.Create(settings,
                 ClusterSettings.Create()
-                    .DiscoverClusterViaDns().SetClusterDns(dnsName).SetClusterGossipPort(2113), $"{dnsName}-Cluster Connection");
+                .DiscoverClusterViaDns()
+	            .SetClusterDns(dnsName)
+	            .SetClusterGossipPort(tcpPort), $"{dnsName}-Cluster Connection");
 
             Connection = new EventStoreConnectionWrapper(esConn);
 
@@ -137,8 +139,8 @@ namespace ReactiveDomain.EventStore {
         /// Establish EventStore Cluster Connection via Gossip Seed IP address(es) and the same TCP port
         /// </summary>
         /// <remarks>
-        /// Connect to EventStore using gossip seed IP addresses.
-        /// This supports both a single EventStore instance and an EventStore cluster.
+        /// Connect to an EventStore cluster using gossip seed IP addresses.
+        /// This supports both a single EventStore cluster node and a multi-node EventStore cluster.
         /// A cluster of 1 is equivalent to a single instance.
         /// </remarks>
         /// <param name="credentials">UserCredentials</param>
@@ -155,7 +157,7 @@ namespace ReactiveDomain.EventStore {
             }
 
 	        var ports = new List<int>();
-	        for (int i = 0; i < gossipSeeds.Length; i++)
+	        for (var i = 0; i < gossipSeeds.Length; i++)
 	        {
 		        ports.Add(tcpPort);
 	        }
@@ -166,8 +168,8 @@ namespace ReactiveDomain.EventStore {
 		/// Establish EventStore Cluster Connection via Gossip Seed IP address(es)
 		/// </summary>
 		/// <remarks>
-		/// Connect to EventStore using gossip seed IP addresses.
-		/// This supports both a single EventStore instance and an EventStore cluster.
+		/// Connect to an EventStore cluster using gossip seed IP addresses.
+		/// This supports both a single EventStore cluster node and a multi-node EventStore cluster.
 		/// A cluster of 1 is equivalent to a single instance.
 		/// </remarks>
 		/// <param name="credentials">UserCredentials</param>
@@ -203,7 +205,7 @@ namespace ReactiveDomain.EventStore {
 				.Build();
 
 			var seeds = new List<IPEndPoint>();
-			for (int i = 0; i < gossipSeeds.Length; i++)
+			for (var i = 0; i < gossipSeeds.Length; i++)
 			{
 				seeds.Add(new IPEndPoint(gossipSeeds[i], tcpPorts.Length.Equals(1) ? tcpPorts[0] : tcpPorts[i]));
 			}
