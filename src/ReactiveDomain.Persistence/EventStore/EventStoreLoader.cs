@@ -17,6 +17,9 @@ using ILogger = ReactiveDomain.Logging.ILogger;
 
 namespace ReactiveDomain.EventStore {
     public class EventStoreLoader {
+
+        internal const int CLUSTER_PORT = 2113;
+
         public enum StartConflictOption {
             Kill,
             Connect,
@@ -100,11 +103,11 @@ namespace ReactiveDomain.EventStore {
         /// </remarks>
         /// <param name="credentials">UserCredentials</param>
         /// <param name="dnsName">DNS name representing cluster IP address(es)</param>
-        /// <param name="tcpPort">TCP port used for all cluster nodes</param>
+        /// <param name="tcpPort">TCP port used for all cluster nodes. Optional defaulting to the well known port of 2113.</param>
         public void Connect(
             UserCredentials credentials,
             string dnsName,
-            int tcpPort) {
+            int tcpPort = CLUSTER_PORT) {
 
             if (dnsName is null || dnsName.Length.Equals(0)) {
                 _log.Error("The DNS name must be supplied.");
@@ -145,20 +148,19 @@ namespace ReactiveDomain.EventStore {
         /// </remarks>
         /// <param name="credentials">UserCredentials</param>
         /// <param name="gossipSeeds">The TCP/IP addresses of the EventStore servers</param>
-        /// <param name="tcpPort">TCP ports replicated for all gossip seeds.</param>
+        /// <param name="tcpPort">TCP port used for all gossip seed IPs. Optional defaulting to the well known port of 2113.</param>
         public void Connect(
             UserCredentials credentials,
             IPAddress[] gossipSeeds,
-            int tcpPort) {
+            int tcpPort = CLUSTER_PORT) {
 
-            if (gossipSeeds.Length == 0) {
+            if (gossipSeeds == null || gossipSeeds.Length == 0) {
                 _log.Error("One or more EventStore Gossip Seed IPs must be supplied.");
                 return;
             }
 
 	        var ports = new List<int>();
-	        for (var i = 0; i < gossipSeeds.Length; i++)
-	        {
+	        for (var i = 0; i < gossipSeeds.Length; i++) {
 		        ports.Add(tcpPort);
 	        }
 			Connect(credentials, gossipSeeds, ports.ToArray());
@@ -174,26 +176,21 @@ namespace ReactiveDomain.EventStore {
 		/// </remarks>
 		/// <param name="credentials">UserCredentials</param>
 		/// <param name="gossipSeeds">The TCP/IP addresses of the EventStore servers</param>
-		/// <param name="tcpPorts">TCP ports for the gossip seeds. Keep in order with the gossip seeds. If all gossip seeds use the same port, you can pass only one.</param>
+		/// <param name="tcpPorts">TCP ports for the gossip seeds. Keep in order with the gossip seeds.
+		/// If all gossip seeds use the same port, you can pass one port, and if you use the default 2113, the parameter is optional.</param>
 		public void Connect(
 			UserCredentials credentials,
 			IPAddress[] gossipSeeds,
-			int[] tcpPorts)
-		{
+			int[] tcpPorts) {
 
-			if (gossipSeeds.Length == 0)
-			{
+			if (gossipSeeds == null || gossipSeeds.Length == 0) {
 				_log.Error("One or more EventStore Gossip Seed IPs must be supplied.");
 				return;
 			}
-			if (tcpPorts.Length == 0)
-			{
-				_log.Error("One or more TCP ports must be supplied.");
-				return;
-			}
-			if (gossipSeeds.Length != tcpPorts.Length && tcpPorts.Length > 1)
-			{
-				_log.Error("One TCP port, or one port per seed is required. ");
+
+		    tcpPorts = tcpPorts ?? new [] { CLUSTER_PORT };
+			if (gossipSeeds.Length != tcpPorts.Length && tcpPorts.Length > 1) {
+				_log.Error("Mismatch of IPaAddress count and TCP port count. ");
 			}
 
 			var settings = ConnectionSettings.Create()
@@ -205,8 +202,7 @@ namespace ReactiveDomain.EventStore {
 				.Build();
 
 			var seeds = new List<IPEndPoint>();
-			for (var i = 0; i < gossipSeeds.Length; i++)
-			{
+			for (var i = 0; i < gossipSeeds.Length; i++) {
 				seeds.Add(new IPEndPoint(gossipSeeds[i], tcpPorts.Length.Equals(1) ? tcpPorts[0] : tcpPorts[i]));
 			}
 
@@ -216,8 +212,7 @@ namespace ReactiveDomain.EventStore {
 					.DiscoverClusterViaGossipSeeds()
 					.SetGossipSeedEndPoints(seeds.ToArray()), $"{gossipSeeds.Length}-Cluster Connection"));
 
-			if (Connection == null)
-			{
+			if (Connection == null) {
 				_log.Error($"EventStore Custer of {gossipSeeds.Length} Connection is null - Diagnostic Monitoring will be unavailable.");
 				TeardownEventStore(false);
 				return;
@@ -248,8 +243,7 @@ namespace ReactiveDomain.EventStore {
             Connection =
                 new EventStoreConnectionWrapper(EventStoreConnection.Create(settings, tcpEndpoint, "Default Connection"));
 
-            if (Connection == null)
-            {
+            if (Connection == null) {
                 _log.Error("EventStore Connection is null - Diagnostic Monitoring will be unavailable.");
                 TeardownEventStore(false);
                 return;
@@ -268,15 +262,12 @@ namespace ReactiveDomain.EventStore {
             Connection.Connect();
             int retry = 8;
             int count = 0;
-            do
-            {
-                try
-                {
+            do {
+                try {
                     Connection.ReadStreamForward("by_event_type", 0, 1);
                     return;
                 }
-                catch
-                {
+                catch {
                     //ignore
                 }
 
